@@ -5,6 +5,9 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 require('dotenv').config();
 
+// Import Message model
+const Message = require('./models/Message');
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -33,10 +36,18 @@ io.on('connection', (socket) => {
   console.log('New user connected:', socket.id);
 
   // User joins a room
-  socket.on('joinRoom', (roomName, userName) => {
+  socket.on('joinRoom', async (roomName, userName) => {
     socket.join(roomName);
     console.log(`${userName} joined room: ${roomName}`);
- 
+    
+    // Load message history from database
+    try {
+      const messages = await Message.find({ room: roomName }).sort({ timestamp: 1 });
+      socket.emit('loadMessages', messages);
+    } catch (error) {
+      console.log('Error loading messages:', error);
+    }
+    
     // Tell everyone in room that user joined
     socket.to(roomName).emit('userJoined', {
       userName: userName,
@@ -45,11 +56,24 @@ io.on('connection', (socket) => {
   });
 
   // User sends a message
-  socket.on('sendMessage', (roomName, messageData) => {
+  socket.on('sendMessage', async (roomName, messageData) => {
     console.log(`Message in ${roomName}:`, messageData);
     
-    // Broadcast to everyone in the room
-    io.to(roomName).emit('receiveMessage', messageData);
+    try {
+      // Save message to database
+      const newMessage = new Message({
+        sender: messageData.sender,
+        room: roomName,
+        text: messageData.text
+      });
+      await newMessage.save();
+      
+      // Broadcast to everyone in the room
+      io.to(roomName).emit('receiveMessage', newMessage);
+    } catch (error) {
+      console.log('Error saving message:', error);
+      socket.emit('error', 'Failed to save message');
+    }
   });
 
   // User leaves room
